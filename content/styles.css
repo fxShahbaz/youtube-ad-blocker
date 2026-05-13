@@ -71,3 +71,37 @@ ytd-shelf-renderer[is-ad],
 [data-is-ad="true"] {
   display: none !important;
 }
+
+/* ── Collapse parent wrappers that held ads (no blank space left behind) ── */
+/* ytd-rich-section-renderer wraps full-width homepage banner/shelf ads */
+ytd-rich-section-renderer:has(ytd-statement-banner-renderer),
+ytd-rich-section-renderer:has(ytd-banner-promo-renderer),
+ytd-rich-section-renderer:has(ytd-mealbar-promo-renderer),
+ytd-rich-section-renderer:has(ytd-ad-slot-renderer),
+ytd-rich-section-renderer:has(ytd-display-ad-renderer),
+ytd-rich-section-renderer:has(ytd-in-feed-ad-layout-renderer),
+ytd-rich-section-renderer:has(ytd-promoted-sparkles-web-renderer),
+ytd-rich-section-renderer:empty,
+
+/* ytd-rich-item-renderer wraps individual grid cards that are ad slots */
+ytd-rich-item-renderer:has(ytd-ad-slot-renderer),
+ytd-rich-item-renderer:has(ytd-display-ad-renderer),
+ytd-rich-item-renderer:has(ytd-in-feed-ad-layout-renderer),
+ytd-rich-item-renderer:empty,
+
+/* Grid rows that become fully empty after ad removal */
+ytd-rich-grid-row:empty,
+
+/* Sidebar / watch-page companion ad wrappers */
+ytd-watch-next-secondary-results-renderer ytd-ad-slot-renderer,
+#related #player-ads,
+ytd-item-section-renderer:has(ytd-ad-slot-renderer) {
+  display: none !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border: none !important;
+}

@@ -118,17 +118,63 @@
     'tp-yt-paper-dialog[aria-label*="premium"]',
   ];
 
+  // Parent tags that are safe to collapse when they have no visible content
+  const COLLAPSIBLE_PARENTS = new Set([
+    'ytd-rich-section-renderer',
+    'ytd-rich-grid-row',
+    'ytd-rich-item-renderer',
+    'ytd-item-section-renderer',
+    'ytd-shelf-renderer',
+    'ytd-horizontal-card-list-renderer',
+  ]);
+
+  // After removing an ad child, walk up and collapse any now-empty parent wrappers.
+  // Stops at depth 5 or when it hits a non-collapsible container.
+  function collapseEmptyParents(removedEl) {
+    let node = removedEl.parentElement;
+    let depth = 0;
+
+    while (node && depth < 5) {
+      const tag = node.tagName?.toLowerCase();
+      if (!COLLAPSIBLE_PARENTS.has(tag)) break;
+
+      // A node is "empty" if it has no child elements, or all its children are
+      // already hidden / have zero height (already collapsed by us).
+      const hasVisibleChild = Array.from(node.children).some((child) => {
+        const s = child.style;
+        return s.display !== 'none' && s.height !== '0px' && s.maxHeight !== '0px';
+      });
+
+      if (!hasVisibleChild) {
+        node.style.cssText +=
+          ';display:none!important;height:0!important;min-height:0!important;' +
+          'max-height:0!important;margin:0!important;padding:0!important;overflow:hidden!important;';
+      } else {
+        break; // parent still has real content — stop climbing
+      }
+
+      node = node.parentElement;
+      depth++;
+    }
+  }
+
+  function removeAndCollapse(el) {
+    const parent = el.parentElement;
+    el.remove();
+    if (parent) collapseEmptyParents({ parentElement: parent });
+  }
+
   function removePageAds() {
     if (!settings.blockAds) return;
     PAGE_AD_SELECTORS.forEach((sel) => {
-      document.querySelectorAll(sel).forEach((el) => el.remove());
+      document.querySelectorAll(sel).forEach(removeAndCollapse);
     });
   }
 
   function removeUpsells() {
     if (!settings.removeUpsells) return;
     UPSELL_SELECTORS.forEach((sel) => {
-      document.querySelectorAll(sel).forEach((el) => el.remove());
+      document.querySelectorAll(sel).forEach(removeAndCollapse);
     });
   }
 
@@ -216,7 +262,7 @@
               (node.id === 'masthead-ad') ||
               (node.id === 'player-ads'))
           ) {
-            node.remove();
+            removeAndCollapse(node);
             return;
           }
 
@@ -227,7 +273,7 @@
               tag === 'ytd-mealbar-promo-renderer' ||
               tag === 'ytd-statement-banner-renderer')
           ) {
-            node.remove();
+            removeAndCollapse(node);
           }
         });
       }
