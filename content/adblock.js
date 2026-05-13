@@ -32,7 +32,20 @@
     } catch (_) {}
   })();
 
-  // ─── AD SKIP LOGIC ─────────────────────────────────────────────────────────
+  // ─── AD LIFECYCLE & STEALTH SKIP ───────────────────────────────────────────
+  // Strategy for "premium feel":
+  //   1. On ad start: black out the player (CSS via data-ytu-ad), mute audio,
+  //      save the user's original volume/rate so we can restore them cleanly.
+  //   2. While the ad is active: poll every 50ms — click any skip button the
+  //      instant it's in the DOM (ignore visibility, ignore `disabled`), and
+  //      jam currentTime to the end + 16x rate as a fallback for unskippable
+  //      ads where seeking is blocked.
+  //   3. On ad end: clear the CSS overlay, restore audio/rate, stop polling.
+  let _adActive = false;
+  let _adKillerInterval = null;
+  let _originalVolume = 1;
+  let _originalMuted = false;
+  let _originalRate = 1;
   let _lastAdDuration = 0;
   let _userPaused = false;
 
@@ -46,44 +59,102 @@
 
   function isShowingAd() {
     const player = getPlayer();
-    return player && (
+    return !!player && (
       player.classList.contains('ad-showing') ||
       player.classList.contains('ad-interrupting')
     );
   }
 
-  function skipCurrentAd() {
-    if (!settings.blockAds) return;
-
-    // Try the skip button first (user-friendly, least disruptive)
-    const skipBtn = document.querySelector(
-      '.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, [class*="skip-ad-button"]'
+  // Force-click any skip button regardless of visibility/disabled state.
+  // YouTube uses `disabled` during the 5s countdown — we override that.
+  function clickSkipButton() {
+    const btn = document.querySelector(
+      '.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, ' +
+      'button[class*="skip-ad-button"], .ytp-ad-skip-button-container button'
     );
-    if (skipBtn && skipBtn.offsetParent !== null) {
-      skipBtn.click();
-      reportAdSkipped();
-      return;
-    }
+    if (!btn) return false;
+    try {
+      btn.removeAttribute('disabled');
+      btn.click();
+      // Also dispatch a mousedown/mouseup for stubborn handlers
+      btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    } catch (_) {}
+    return true;
+  }
 
+  // Called every 50ms while an ad is active.
+  function killAd() {
+    if (!settings.blockAds) return;
     const video = getVideo();
-    if (!video || !isShowingAd()) return;
+    if (!video) return;
 
-    // Speed through unskippable ads (16x hits end almost instantly)
+    // Keep audio silenced no matter how YouTube fights back
+    if (!video.muted) video.muted = true;
+    if (video.volume !== 0) video.volume = 0;
+
+    // Skip button → instant exit
+    if (clickSkipButton()) return;
+
+    // No skip available → jump to end. If seeking is blocked, the 16x
+    // playback rate makes it finish in ~0.3s anyway.
     if (video.duration && !isNaN(video.duration) && video.duration > 0) {
       _lastAdDuration = video.duration;
-      video.playbackRate = 16;
-      video.volume = 0; // mute during ad
+      try {
+        if (video.currentTime < video.duration - 0.1) {
+          video.currentTime = video.duration;
+        }
+      } catch (_) {}
+      if (video.playbackRate !== 16) video.playbackRate = 16;
     }
   }
 
-  function restoreVideoState() {
+  function onAdStart() {
+    if (_adActive) return;
+    _adActive = true;
+
     const video = getVideo();
-    if (!video) return;
-    if (!isShowingAd() && video.playbackRate === 16) {
-      video.playbackRate = 1;
-      video.volume = 1;
-      reportAdSkipped();
+    if (video) {
+      _originalVolume = video.volume;
+      _originalMuted = video.muted;
+      _originalRate = video.playbackRate;
     }
+
+    // CSS attribute drives the "black box over player" overlay
+    document.documentElement.setAttribute('data-ytu-ad', '1');
+
+    // Aggressive 50ms loop — clicks skip the instant it appears
+    if (!_adKillerInterval) {
+      _adKillerInterval = setInterval(killAd, 50);
+    }
+    killAd();
+  }
+
+  function onAdEnd() {
+    if (!_adActive) return;
+    _adActive = false;
+
+    document.documentElement.removeAttribute('data-ytu-ad');
+
+    const video = getVideo();
+    if (video) {
+      video.muted = _originalMuted;
+      video.volume = _originalVolume;
+      video.playbackRate = _originalRate === 16 ? 1 : _originalRate;
+    }
+
+    if (_adKillerInterval) {
+      clearInterval(_adKillerInterval);
+      _adKillerInterval = null;
+    }
+
+    reportAdSkipped();
+  }
+
+  function checkAdState() {
+    const ad = isShowingAd();
+    if (ad && !_adActive) onAdStart();
+    else if (!ad && _adActive) onAdEnd();
   }
 
   function reportAdSkipped() {
@@ -267,11 +338,10 @@
     }
 
     if (adClassChange) {
-      // Stagger attempts to catch both skip button appearance and fast-forward fallback
-      skipCurrentAd();
-      setTimeout(skipCurrentAd, 100);
-      setTimeout(skipCurrentAd, 400);
-      setTimeout(skipCurrentAd, 900);
+      // Flip into / out of "ad active" mode immediately when YouTube toggles
+      // the .ad-showing class on the player. onAdStart() spins up a 50ms
+      // killer loop; onAdEnd() restores audio and clears the black overlay.
+      checkAdState();
     }
   });
 
@@ -286,10 +356,11 @@
 
     trackPauseIntent();
 
-    // Polling loop as belt-and-suspenders fallback
+    // Polling loop as belt-and-suspenders fallback for the ad lifecycle
+    // and DOM-level ad cleanup. The 50ms killAd loop is spun up separately
+    // by onAdStart() and only runs while an ad is actually playing.
     setInterval(() => {
-      skipCurrentAd();
-      restoreVideoState();
+      checkAdState();
       removeVideoOverlays();
       removePageAds();
       removeUpsells();
