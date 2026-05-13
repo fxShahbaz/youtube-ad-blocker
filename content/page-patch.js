@@ -17,6 +17,9 @@
   window.__ytuPagePatched = true;
 
   try {
+    // Property overrides — when YouTube's handlers check document.hidden /
+    // visibilityState inside their listener, they'll see "visible" and won't
+    // pause the video. This alone is enough for most YouTube builds.
     Object.defineProperty(document, 'hidden', {
       configurable: true,
       get: () => false,
@@ -34,11 +37,10 @@
       get: () => 'visible',
     });
 
-    // Drop any visibilitychange listener YouTube tries to register.
-    const _orig = EventTarget.prototype.addEventListener;
-    EventTarget.prototype.addEventListener = function (type, listener, opts) {
-      if (type === 'visibilitychange' || type === 'webkitvisibilitychange') return;
-      return _orig.call(this, type, listener, opts);
-    };
+    // Note: we deliberately do NOT override addEventListener anymore. The
+    // previous global override blocked visibilitychange listeners across
+    // every EventTarget — which broke YouTube's own end-of-video transition
+    // pipeline and left videos stuck on the loading spinner. The property
+    // overrides above handle the background-play case cleanly on their own.
   } catch (_) {}
 })();

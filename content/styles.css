@@ -94,11 +94,29 @@ ytd-popup-container > tp-yt-paper-toast {
 }
 
 /* ── ANTI-ADBLOCK ENFORCEMENT POPUP ─────────────────────────────────────────
-   This is YouTube's "Ad blockers violate our Terms of Service" modal.
-   When it appears, YouTube also dims the page with a backdrop and pauses
-   the video. We hide all three. adblock.js also resumes playback. */
+   YouTube's "Ad blockers violate our Terms" modal AND the newer
+   "Keep Ads / Go ad-free / Enjoy ad-free YouTube" Premium upsell modal.
+   We detect both via :has() + aria-label on the buttons inside — zero JS
+   cost. adblock.js also removes the dim backdrop and resumes playback. */
 ytd-enforcement-message-view-model,
 tp-yt-paper-dialog[aria-labelledby*="enforcement"],
+
+/* Whole popup container if it holds the enforcement message */
+ytd-popup-container:has(ytd-enforcement-message-view-model),
+
+/* "Keep Ads / Go ad-free" Premium upsell — detect via button aria-label */
+ytd-popup-container:has(button[aria-label*="Keep Ads"]),
+ytd-popup-container:has(button[aria-label*="Keep ads"]),
+ytd-popup-container:has(button[aria-label*="Go ad-free"]),
+ytd-popup-container:has(button[aria-label*="ad-free"]),
+ytd-popup-container:has(button[aria-label*="ad blocker"]),
+ytd-popup-container:has(button[aria-label*="Ad blocker"]),
+
+tp-yt-paper-dialog:has(button[aria-label*="Keep Ads"]),
+tp-yt-paper-dialog:has(button[aria-label*="Go ad-free"]),
+tp-yt-paper-dialog:has(button[aria-label*="ad-free"]),
+
+/* The dim backdrop that comes with these popups */
 tp-yt-iron-overlay-backdrop {
   display: none !important;
   visibility: hidden !important;
