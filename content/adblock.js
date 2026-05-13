@@ -118,56 +118,48 @@
     'tp-yt-paper-dialog[aria-label*="premium"]',
   ];
 
-  // Parent tags that are safe to collapse when they have no visible content
-  const COLLAPSIBLE_PARENTS = new Set([
-    'ytd-rich-section-renderer',
-    'ytd-rich-grid-row',
-    'ytd-rich-item-renderer',
-    'ytd-item-section-renderer',
-    'ytd-shelf-renderer',
-    'ytd-horizontal-card-list-renderer',
-  ]);
+  // Wrapper tags that occupy a grid cell / full-width slot in YouTube's layout.
+  // Removing one of these makes CSS Grid auto-flow neighbors into the freed space.
+  const WRAPPER_SELECTOR =
+    'ytd-rich-item-renderer, ytd-rich-section-renderer, ytd-shelf-renderer, ' +
+    'ytd-item-section-renderer, ytd-horizontal-card-list-renderer';
 
-  // After removing an ad child, walk up and collapse any now-empty parent wrappers.
-  // Stops at depth 5 or when it hits a non-collapsible container.
-  function collapseEmptyParents(removedEl) {
-    let node = removedEl.parentElement;
-    let depth = 0;
-
-    while (node && depth < 5) {
-      const tag = node.tagName?.toLowerCase();
-      if (!COLLAPSIBLE_PARENTS.has(tag)) break;
-
-      // A node is "empty" if it has no child elements, or all its children are
-      // already hidden / have zero height (already collapsed by us).
-      const hasVisibleChild = Array.from(node.children).some((child) => {
-        const s = child.style;
-        return s.display !== 'none' && s.height !== '0px' && s.maxHeight !== '0px';
-      });
-
-      if (!hasVisibleChild) {
-        node.style.cssText +=
-          ';display:none!important;height:0!important;min-height:0!important;' +
-          'max-height:0!important;margin:0!important;padding:0!important;overflow:hidden!important;';
-      } else {
-        break; // parent still has real content — stop climbing
-      }
-
-      node = node.parentElement;
-      depth++;
-    }
+  // Walk up to find the outermost wrapper that should be removed instead of `el`.
+  // Returns `el` itself if no wrapper ancestor exists.
+  function findRemovalTarget(el) {
+    return el.closest(WRAPPER_SELECTOR) || el;
   }
 
   function removeAndCollapse(el) {
-    const parent = el.parentElement;
-    el.remove();
-    if (parent) collapseEmptyParents({ parentElement: parent });
+    if (!el || !el.isConnected) return;
+    const target = findRemovalTarget(el);
+    const parent = target.parentElement;
+    target.remove();
+
+    // After removal, check if the parent row/section also became empty and collapse it.
+    if (parent) {
+      const parentTag = parent.tagName?.toLowerCase();
+      if (
+        (parentTag === 'ytd-rich-grid-row' ||
+          parentTag === 'ytd-rich-shelf-renderer' ||
+          parentTag === 'ytd-horizontal-list-renderer') &&
+        parent.children.length === 0
+      ) {
+        parent.remove();
+      }
+    }
   }
 
   function removePageAds() {
     if (!settings.blockAds) return;
     PAGE_AD_SELECTORS.forEach((sel) => {
       document.querySelectorAll(sel).forEach(removeAndCollapse);
+    });
+    // Also catch empty grid cells left behind by aggressive YouTube placeholder logic
+    document.querySelectorAll('ytd-rich-item-renderer').forEach((cell) => {
+      if (cell.children.length === 0 || cell.textContent.trim() === '') {
+        cell.remove();
+      }
     });
   }
 
@@ -248,32 +240,27 @@
       if (m.addedNodes.length) {
         m.addedNodes.forEach((node) => {
           if (node.nodeType !== 1) return;
-          const tag = node.tagName?.toLowerCase();
 
-          // Nuke ad elements the moment they're inserted
-          if (
-            settings.blockAds &&
-            (tag === 'ytd-ad-slot-renderer' ||
-              tag === 'ytd-action-companion-ad-renderer' ||
-              tag === 'ytd-display-ad-renderer' ||
-              tag === 'ytd-banner-promo-renderer' ||
-              tag === 'ytd-promoted-video-renderer' ||
-              tag === 'ytd-in-feed-ad-layout-renderer' ||
-              (node.id === 'masthead-ad') ||
-              (node.id === 'player-ads'))
-          ) {
-            removeAndCollapse(node);
-            return;
+          // Look for ad elements inside the added subtree, not just the top node.
+          // YouTube often inserts a wrapper (ytd-rich-item-renderer) with the ad
+          // slot already nested inside it, so checking only `node.tagName` misses them.
+          if (settings.blockAds) {
+            const adInside = node.matches?.(PAGE_AD_SELECTORS.join(','))
+              ? node
+              : node.querySelector?.(PAGE_AD_SELECTORS.join(','));
+            if (adInside) {
+              removeAndCollapse(adInside);
+              return;
+            }
           }
 
-          // Nuke upsell dialogs the moment they're inserted
-          if (
-            settings.removeUpsells &&
-            (tag === 'ytd-premium-yva-upsell-renderer' ||
-              tag === 'ytd-mealbar-promo-renderer' ||
-              tag === 'ytd-statement-banner-renderer')
-          ) {
-            removeAndCollapse(node);
+          if (settings.removeUpsells) {
+            const upsellInside = node.matches?.(UPSELL_SELECTORS.join(','))
+              ? node
+              : node.querySelector?.(UPSELL_SELECTORS.join(','));
+            if (upsellInside) {
+              removeAndCollapse(upsellInside);
+            }
           }
         });
       }
