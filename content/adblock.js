@@ -1,198 +1,34 @@
-// YT Unleashed — content script (runs at document_start, all frames)
-(function ytUnleashed() {
+// YT Unleashed — GOD MODE ad blocker (isolated content-script world)
+//
+// Strategy: a single 100ms tick that does five things in priority order:
+//   1. Kill the "Ad blockers violate YouTube's Terms" popup (and unfreeze
+//      the player if YouTube paused it).
+//   2. Kill the "Keep Ads / Go ad-free" YouTube Premium upsell popup.
+//   3. If a video ad is playing: mute audio, click any skip button (force),
+//      jump video.currentTime to video.duration.
+//   4. Remove banner / sidebar / feed ads from the DOM (including their
+//      grid-cell wrappers so CSS Grid auto-flows the surrounding videos).
+//   5. Resume playback if YouTube paused due to background-tab logic.
+//
+// Plus a MutationObserver does the same on every DOM insertion so anything
+// that slips into the page is killed within microseconds, not 100ms.
+
+(function ytuGodMode() {
   'use strict';
 
-  // ─── SETTINGS ──────────────────────────────────────────────────────────────
   let settings = { blockAds: true, backgroundPlay: true, removeUpsells: true };
+  try {
+    chrome.storage.local.get(null, (s) => {
+      if (s) settings = { ...settings, ...s };
+    });
+  } catch (_) {}
 
-  chrome.storage.local.get(null, (s) => {
-    if (s) settings = { ...settings, ...s };
-  });
+  // ────────────────────────────────────────────────────────────────────────
+  // SELECTORS
+  // ────────────────────────────────────────────────────────────────────────
 
-  // ─── BACKGROUND PLAY PATCH (must run before YouTube's scripts) ─────────────
-  // Override the Page Visibility API so YouTube never sees the tab as hidden.
-  // This prevents auto-pause when minimizing the window or switching tabs.
-  (function patchVisibility() {
-    try {
-      Object.defineProperty(document, 'hidden', {
-        get: () => false,
-        configurable: true,
-      });
-      Object.defineProperty(document, 'visibilityState', {
-        get: () => 'visible',
-        configurable: true,
-      });
-
-      // Drop any visibilitychange listener YouTube tries to register
-      const _orig = EventTarget.prototype.addEventListener;
-      EventTarget.prototype.addEventListener = function (type, listener, opts) {
-        if (type === 'visibilitychange') return; // swallow YouTube's pause handler
-        return _orig.call(this, type, listener, opts);
-      };
-    } catch (_) {}
-  })();
-
-  // ─── AD LIFECYCLE & STEALTH SKIP ───────────────────────────────────────────
-  // Strategy for "premium feel":
-  //   1. On ad start: black out the player (CSS via data-ytu-ad), mute audio,
-  //      save the user's original volume/rate so we can restore them cleanly.
-  //   2. While the ad is active: poll every 50ms — click any skip button the
-  //      instant it's in the DOM (ignore visibility, ignore `disabled`), and
-  //      jam currentTime to the end + 16x rate as a fallback for unskippable
-  //      ads where seeking is blocked.
-  //   3. On ad end: clear the CSS overlay, restore audio/rate, stop polling.
-  let _adActive = false;
-  let _adKillerInterval = null;
-  let _originalVolume = 1;
-  let _originalMuted = false;
-  let _originalRate = 1;
-  let _lastAdDuration = 0;
-  let _userPaused = false;
-  // Tracks whether we've already issued the destructive skip (seek + 16x)
-  // for the current ad. Prevents the 50ms loop from re-applying these
-  // commands while YouTube is transitioning to the real video, which was
-  // causing long buffering/loading delays.
-  let _adKillFired = false;
-
-  function getVideo() {
-    return document.querySelector('video');
-  }
-
-  function getPlayer() {
-    return document.querySelector('.html5-video-player');
-  }
-
-  function isShowingAd() {
-    const player = getPlayer();
-    return !!player && (
-      player.classList.contains('ad-showing') ||
-      player.classList.contains('ad-interrupting')
-    );
-  }
-
-  // Force-click any skip button regardless of visibility/disabled state.
-  // YouTube uses `disabled` during the 5s countdown — we override that.
-  function clickSkipButton() {
-    const btn = document.querySelector(
-      '.ytp-skip-ad-button, .ytp-ad-skip-button, .ytp-ad-skip-button-modern, ' +
-      'button[class*="skip-ad-button"], .ytp-ad-skip-button-container button'
-    );
-    if (!btn) return false;
-    try {
-      btn.removeAttribute('disabled');
-      btn.click();
-      // Also dispatch a mousedown/mouseup for stubborn handlers
-      btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-      btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-    } catch (_) {}
-    return true;
-  }
-
-  // Called every 50ms while an ad is active.
-  function killAd() {
-    if (!settings.blockAds) return;
-    // Defensive: bail if the ad-showing class is gone. Without this guard the
-    // 50ms loop can fire one extra time *after* YouTube has started loading
-    // the real video, and re-applying currentTime=duration / playbackRate=16
-    // on the real video element causes the long buffering delay.
-    if (!isShowingAd()) return;
-    const video = getVideo();
-    if (!video) return;
-
-    // Keep audio silenced (cheap to re-assert)
-    if (!video.muted) video.muted = true;
-
-    // Skip button → instant exit. Safe to call on every tick; clickSkipButton
-    // returns false when no button is present, so we fall through to the
-    // forced-end below for unskippable ads.
-    if (clickSkipButton()) return;
-
-    // For the forced-end path, only act ONCE per ad. Re-asserting these
-    // values 20 times per second was confusing YouTube's state machine
-    // and dramatically extending the "Loading…" gap before the real video.
-    if (_adKillFired) return;
-
-    if (video.duration && !isNaN(video.duration) && video.duration > 1) {
-      _lastAdDuration = video.duration;
-      try {
-        video.currentTime = video.duration;
-      } catch (_) {}
-      video.playbackRate = 16;
-      _adKillFired = true;
-    }
-  }
-
-  function onAdStart() {
-    if (_adActive) return;
-    _adActive = true;
-    _adKillFired = false;
-
-    const video = getVideo();
-    if (video) {
-      _originalVolume = video.volume > 0 ? video.volume : 1;
-      _originalMuted = video.muted && video.volume === 0 ? false : video.muted;
-      _originalRate = video.playbackRate === 16 ? 1 : video.playbackRate;
-    }
-
-    if (!_adKillerInterval) {
-      _adKillerInterval = setInterval(killAd, 100);
-    }
-    killAd();
-  }
-
-  function onAdEnd() {
-    if (!_adActive) return;
-    _adActive = false;
-    _adKillFired = false;
-
-    if (_adKillerInterval) {
-      clearInterval(_adKillerInterval);
-      _adKillerInterval = null;
-    }
-
-    const video = getVideo();
-    if (video) {
-      video.muted = _originalMuted;
-      video.volume = _originalVolume;
-      video.playbackRate = _originalRate;
-      if (video.paused && !_userPaused) {
-        video.play().catch(() => {});
-      }
-    }
-
-    reportAdSkipped();
-  }
-
-  function checkAdState() {
-    const ad = isShowingAd();
-    if (ad && !_adActive) onAdStart();
-    else if (!ad && _adActive) onAdEnd();
-  }
-
-  function reportAdSkipped() {
-    try {
-      chrome.runtime.sendMessage({ type: 'AD_SKIPPED', duration: Math.round(_lastAdDuration) });
-    } catch (_) {}
-    _lastAdDuration = 0;
-  }
-
-  // In a back-to-back ad sequence YouTube keeps `.ad-showing` set the whole
-  // time but reloads the <video> source for each ad — durationchange and
-  // loadstart fire on the boundary. Reset the kill flag so each new ad
-  // also gets the seek-to-end treatment.
-  function attachAdResetListeners() {
-    const video = getVideo();
-    if (!video || video._ytuAdResetBound) return;
-    video._ytuAdResetBound = true;
-    const reset = () => {
-      if (_adActive) _adKillFired = false;
-    };
-    video.addEventListener('durationchange', reset);
-    video.addEventListener('loadstart', reset);
-  }
-
-  // ─── REMOVE DOM AD ELEMENTS ────────────────────────────────────────────────
-  const PAGE_AD_SELECTORS = [
+  // Direct ad surfaces that should always be killed on sight
+  const AD_SELECTORS = [
     '#masthead-ad',
     '#player-ads',
     'ytd-ad-slot-renderer',
@@ -209,100 +45,275 @@
     'ytd-player-legacy-desktop-watch-ads-renderer',
     'ytd-engagement-panel-section-list-renderer[panel-identifier*="ad"]',
     'ytd-engagement-panel-section-list-renderer[target-id*="ad"]',
+    'ytd-merch-shelf-renderer',
+    'ytd-product-carousel-container-renderer',
   ];
 
+  // Upsell / promo surfaces
   const UPSELL_SELECTORS = [
     'ytd-premium-yva-upsell-renderer',
     'ytd-mealbar-promo-renderer',
     'ytd-statement-banner-renderer',
-    '.ytd-upsell-dialog-renderer',
-    'tp-yt-paper-dialog[aria-label*="Premium"]',
-    'tp-yt-paper-dialog[aria-label*="premium"]',
+    'ytd-popup-container ytd-mealbar-promo-renderer',
+    'tp-yt-paper-toast.ytd-mealbar-promo-renderer',
   ];
 
-  // Wrapper tags that occupy a grid cell / full-width slot in YouTube's layout.
-  // Removing one of these makes CSS Grid auto-flow neighbors into the freed space.
+  // Anti-adblock enforcement popup — YouTube's "you're using an ad blocker" notice
+  const ANTI_ADBLOCK_SELECTORS = [
+    'ytd-enforcement-message-view-model',
+    'tp-yt-paper-dialog[aria-labelledby*="enforcement"]',
+  ];
+
+  // Grid cell / section wrappers — if their entire content was just an ad,
+  // remove the whole wrapper so CSS Grid auto-flows neighbors with no gap.
   const WRAPPER_SELECTOR =
     'ytd-rich-item-renderer, ytd-rich-section-renderer, ytd-shelf-renderer, ' +
     'ytd-item-section-renderer, ytd-horizontal-card-list-renderer';
 
-  // Walk up to find the outermost wrapper that should be removed instead of `el`.
-  // Returns `el` itself if no wrapper ancestor exists.
-  function findRemovalTarget(el) {
-    return el.closest(WRAPPER_SELECTOR) || el;
+  // ────────────────────────────────────────────────────────────────────────
+  // DOM HELPERS
+  // ────────────────────────────────────────────────────────────────────────
+
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const $$ = (sel, root) => (root || document).querySelectorAll(sel);
+
+  function removeWithWrapper(el) {
+    if (!el || !el.isConnected) return;
+    const target = el.closest(WRAPPER_SELECTOR) || el;
+    target.remove();
   }
 
-  function removeAndCollapse(el) {
-    if (!el || !el.isConnected) return;
-    const target = findRemovalTarget(el);
-    const parent = target.parentElement;
-    target.remove();
+  function safeRemoveAll(selectorList) {
+    selectorList.forEach((sel) => {
+      try {
+        $$(sel).forEach(removeWithWrapper);
+      } catch (_) {}
+    });
+  }
 
-    // After removal, check if the parent row/section also became empty and collapse it.
-    if (parent) {
-      const parentTag = parent.tagName?.toLowerCase();
-      if (
-        (parentTag === 'ytd-rich-grid-row' ||
-          parentTag === 'ytd-rich-shelf-renderer' ||
-          parentTag === 'ytd-horizontal-list-renderer') &&
-        parent.children.length === 0
-      ) {
-        parent.remove();
+  // ────────────────────────────────────────────────────────────────────────
+  // VIDEO AD KILLER
+  // ────────────────────────────────────────────────────────────────────────
+
+  let _userPaused = false;
+
+  function getVideo() {
+    return $('.html5-video-player video') || $('video');
+  }
+
+  function getPlayer() {
+    return $('.html5-video-player');
+  }
+
+  function isAdShowing() {
+    const p = getPlayer();
+    return !!p && (p.classList.contains('ad-showing') || p.classList.contains('ad-interrupting'));
+  }
+
+  function forceClickSkip() {
+    // Try every known skip-button class — YouTube has shipped at least 4
+    const selectors = [
+      '.ytp-ad-skip-button-modern',
+      '.ytp-skip-ad-button-modern',
+      '.ytp-ad-skip-button',
+      '.ytp-skip-ad-button',
+      'button[class*="skip-ad-button"]',
+      '.ytp-ad-skip-button-container button',
+    ];
+    for (const sel of selectors) {
+      const btn = $(sel);
+      if (!btn) continue;
+      try {
+        btn.removeAttribute('disabled');
+        btn.click();
+        // Some YouTube builds need a real mouse event sequence
+        btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+      } catch (_) {}
+      return true;
+    }
+    return false;
+  }
+
+  function killVideoAd() {
+    if (!isAdShowing()) return;
+    const video = getVideo();
+    if (!video) return;
+
+    // 1. Always mute during ad (cheap to re-assert)
+    video.muted = true;
+
+    // 2. Click the skip button if it exists (might be the only skip available)
+    forceClickSkip();
+
+    // 3. Jam currentTime to the end. The browser fires `ended`, YouTube
+    // transitions to the real video. This works for skippable AND
+    // unskippable ads as long as seeking isn't blocked.
+    if (video.duration && !isNaN(video.duration) && video.duration > 1) {
+      if (video.currentTime < video.duration - 0.5) {
+        try {
+          video.currentTime = video.duration;
+        } catch (_) {
+          // Seeking blocked → speed through it
+          video.playbackRate = 16;
+        }
       }
     }
   }
 
-  function removePageAds() {
-    if (!settings.blockAds) return;
-    PAGE_AD_SELECTORS.forEach((sel) => {
-      try {
-        document.querySelectorAll(sel).forEach(removeAndCollapse);
-      } catch (_) {}
-    });
-    // Also catch empty grid cells left behind by aggressive YouTube placeholder logic
-    document.querySelectorAll('ytd-rich-item-renderer').forEach((cell) => {
-      if (cell.children.length === 0 || cell.textContent.trim() === '') {
-        cell.remove();
-      }
-    });
-    removeSponsoredCards();
+  function restoreVideoAfterAd() {
+    if (isAdShowing()) return;
+    const video = getVideo();
+    if (!video) return;
+    if (video.muted) video.muted = false;
+    if (video.playbackRate === 16) video.playbackRate = 1;
   }
 
-  // Heuristic sweep for sidebar / feed ad cards that don't match any of our
-  // known custom-element selectors. YouTube ships new ad surfaces regularly
-  // (e.g. the Google Ads "Performance Max" promo panel on watch pages) using
-  // generic tag names, so we look for the universal tell: a "Sponsored" or
-  // "ads.google.com" label inside the card.
+  // ────────────────────────────────────────────────────────────────────────
+  // ANTI-ADBLOCK POPUP KILLER
+  //
+  // YouTube serves a full-screen modal that says "Ad blockers violate
+  // YouTube's Terms of Service" and pauses the video. We detect it by
+  // tag name AND by the giveaway text it always contains, then remove the
+  // popup container and resume playback.
+  // ────────────────────────────────────────────────────────────────────────
+
+  function killAntiAdblockPopup() {
+    let killed = false;
+
+    // 1. Direct selectors
+    ANTI_ADBLOCK_SELECTORS.forEach((sel) => {
+      $$(sel).forEach((el) => {
+        const popup = el.closest('ytd-popup-container, tp-yt-paper-dialog') || el;
+        popup.remove();
+        killed = true;
+      });
+    });
+
+    // 2. Text-based detection — scan visible popup containers for telltale
+    // strings. Covers both the "ad blockers violate…" notice and the
+    // newer "Keep Ads / Go ad-free" Premium upsell shown in the screenshot.
+    $$('ytd-popup-container, tp-yt-paper-dialog, ytd-modal-with-title-and-button-renderer').forEach((popup) => {
+      const text = (popup.textContent || '').toLowerCase();
+      if (
+        text.includes('ad block') ||
+        text.includes('adblock') ||
+        text.includes('ad-block') ||
+        text.includes('ad blocker') ||
+        text.includes('keep ads') ||
+        text.includes('go ad-free') ||
+        text.includes('enjoy ad-free') ||
+        (text.includes('youtube premium') && text.includes('ad'))
+      ) {
+        const container = popup.closest('ytd-popup-container') || popup;
+        container.remove();
+        killed = true;
+      }
+    });
+
+    if (killed) {
+      // YouTube pauses the player when it shows the anti-adblock popup;
+      // resume playback now that the popup is gone.
+      const v = getVideo();
+      if (v && v.paused && !_userPaused) {
+        v.play().catch(() => {});
+      }
+      // Also clear the dimmed body overlay if present
+      const overlay = $('tp-yt-iron-overlay-backdrop');
+      if (overlay) overlay.remove();
+      document.body.style.overflow = '';
+    }
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // BACKGROUND PLAY (resume video if YouTube paused it on tab switch)
+  // ────────────────────────────────────────────────────────────────────────
+
+  function ensureBackgroundPlay() {
+    if (!settings.backgroundPlay) return;
+    const v = getVideo();
+    if (!v) return;
+    if (v.paused && !_userPaused && !isAdShowing() && v.readyState >= 3) {
+      v.play().catch(() => {});
+    }
+  }
+
+  function trackUserPauseIntent() {
+    document.addEventListener(
+      'click',
+      (e) => {
+        const t = e.target;
+        if (t.closest && (t.closest('.ytp-play-button') || t.closest('.html5-main-video'))) {
+          const v = getVideo();
+          if (v) _userPaused = !v.paused; // playing → user wants pause
+        }
+      },
+      true
+    );
+    document.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.code === 'Space' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+          const v = getVideo();
+          if (v) _userPaused = !v.paused;
+        }
+      },
+      true
+    );
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // MAIN TICK — runs every 100ms
+  // ────────────────────────────────────────────────────────────────────────
+
+  function tick() {
+    try {
+      // ORDER MATTERS: kill the popup FIRST so it doesn't visually flicker
+      // and so we resume playback before doing anything else.
+      killAntiAdblockPopup();
+
+      if (settings.blockAds) {
+        killVideoAd();
+        restoreVideoAfterAd();
+        safeRemoveAll(AD_SELECTORS);
+        removeSponsoredCards();
+      }
+
+      if (settings.removeUpsells) {
+        safeRemoveAll(UPSELL_SELECTORS);
+      }
+
+      ensureBackgroundPlay();
+    } catch (_) {}
+  }
+
+  // ────────────────────────────────────────────────────────────────────────
+  // HEURISTIC SWEEP for sidebar/feed ads using "Sponsored" text giveaway
+  // ────────────────────────────────────────────────────────────────────────
+
   function removeSponsoredCards() {
-    const roots = document.querySelectorAll(
+    const roots = $$(
       '#secondary, #secondary-inner, #related, ytd-watch-next-secondary-results-renderer, ' +
-      '#contents.ytd-rich-grid-renderer, ytd-engagement-panel-section-list-renderer'
+      '#contents.ytd-rich-grid-renderer'
     );
     roots.forEach((root) => {
-      // Look at leaf-ish nodes — spans and small divs typically hold the label
-      root.querySelectorAll('span, div, yt-formatted-string').forEach((el) => {
-        if (el.children.length > 0) return; // not a leaf text node
-        const text = el.textContent.trim();
+      root.querySelectorAll('span, yt-formatted-string').forEach((el) => {
+        if (el.children.length > 0) return;
+        const text = el.textContent.trim().toLowerCase();
         if (!text) return;
-        const lower = text.toLowerCase();
         if (
-          lower === 'sponsored' ||
-          lower === 'ad' ||
-          lower.startsWith('sponsored ') ||
-          lower.includes('ads.google.com')
+          text === 'sponsored' ||
+          text.startsWith('sponsored ') ||
+          text.includes('ads.google.com')
         ) {
-          // Walk up to the nearest meaningful container and remove it
           let container = el.closest(
-            'ytd-companion-slot-renderer, ytd-ad-slot-renderer, ' +
-            'ytd-display-ad-renderer, ytd-promoted-sparkles-web-renderer, ' +
-            'ytd-promoted-sparkles-text-search-renderer, ytd-statement-banner-renderer, ' +
-            'ytd-action-companion-ad-renderer, ytd-rich-section-renderer, ' +
-            'ytd-rich-item-renderer, ytd-engagement-panel-section-list-renderer, ' +
-            'ytd-player-legacy-desktop-watch-ads-renderer'
+            'ytd-companion-slot-renderer, ytd-ad-slot-renderer, ytd-display-ad-renderer, ' +
+            'ytd-promoted-sparkles-web-renderer, ytd-promoted-sparkles-text-search-renderer, ' +
+            'ytd-statement-banner-renderer, ytd-action-companion-ad-renderer, ' +
+            'ytd-rich-section-renderer, ytd-rich-item-renderer, ' +
+            'ytd-engagement-panel-section-list-renderer, ytd-player-legacy-desktop-watch-ads-renderer'
           );
           if (!container) {
-            // No known wrapper — walk up a few levels looking for any ytd-*
-            // custom element that isn't a top-level layout container.
             let node = el.parentElement;
             for (let i = 0; i < 8 && node; i++, node = node.parentElement) {
               const tag = node.tagName?.toLowerCase() || '';
@@ -324,118 +335,67 @@
     });
   }
 
-  function removeUpsells() {
-    if (!settings.removeUpsells) return;
-    UPSELL_SELECTORS.forEach((sel) => {
-      document.querySelectorAll(sel).forEach(removeAndCollapse);
-    });
-  }
+  // ────────────────────────────────────────────────────────────────────────
+  // MUTATION OBSERVER — kill things the instant they appear, don't wait 100ms
+  // ────────────────────────────────────────────────────────────────────────
 
-  function removeVideoOverlays() {
-    if (!settings.blockAds) return;
-    [
-      '.ytp-ad-overlay-container',
-      '.ytp-ad-image-overlay',
-      '.ytp-ad-text-overlay',
-      '.ytp-ce-element',
-      '.ytp-suggested-action',
-      '.ytp-ad-action-interstitial',
-    ].forEach((sel) => {
-      document.querySelectorAll(sel).forEach((el) => {
-        el.style.display = 'none';
-      });
-    });
-  }
+  const adSelectorString = AD_SELECTORS.join(',');
+  const upsellSelectorString = UPSELL_SELECTORS.join(',');
+  const antiAdblockSelectorString = ANTI_ADBLOCK_SELECTORS.join(',');
 
-  // ─── BACKGROUND PLAY: resume if YouTube managed to pause ──────────────────
-  function keepPlaying() {
-    if (!settings.backgroundPlay) return;
-    const video = getVideo();
-    if (!video || isShowingAd()) return;
-    if (video.paused && !_userPaused && video.readyState >= 3) {
-      video.play().catch(() => {});
-    }
-  }
-
-  // ─── TRACK USER INTENT TO PAUSE ───────────────────────────────────────────
-  function trackPauseIntent() {
-    document.addEventListener(
-      'click',
-      (e) => {
-        if (
-          e.target.closest('.ytp-play-button') ||
-          e.target.closest('.html5-main-video')
-        ) {
-          const v = getVideo();
-          if (v) _userPaused = !v.paused; // if playing → user wants pause
-        }
-      },
-      true
-    );
-
-    // Space bar pause
-    document.addEventListener(
-      'keydown',
-      (e) => {
-        if (e.code === 'Space' && document.activeElement?.tagName !== 'INPUT') {
-          const v = getVideo();
-          if (v) _userPaused = !v.paused;
-        }
-      },
-      true
-    );
-  }
-
-  // ─── MUTATION OBSERVER ────────────────────────────────────────────────────
   const observer = new MutationObserver((mutations) => {
-    let adClassChange = false;
-
     for (const m of mutations) {
+      // Class change on player → maybe entered/exited ad
       if (m.type === 'attributes' && m.attributeName === 'class') {
         const el = m.target;
-        if (el.classList?.contains('ad-showing') || el.classList?.contains('ad-interrupting')) {
-          adClassChange = true;
+        if (el.classList && (el.classList.contains('ad-showing') || el.classList.contains('ad-interrupting'))) {
+          killVideoAd();
         }
       }
 
-      if (m.addedNodes.length) {
-        m.addedNodes.forEach((node) => {
-          if (node.nodeType !== 1) return;
+      if (!m.addedNodes.length) continue;
+      m.addedNodes.forEach((node) => {
+        if (node.nodeType !== 1) return;
 
-          // Look for ad elements inside the added subtree, not just the top node.
-          // YouTube often inserts a wrapper (ytd-rich-item-renderer) with the ad
-          // slot already nested inside it, so checking only `node.tagName` misses them.
-          if (settings.blockAds) {
-            const adInside = node.matches?.(PAGE_AD_SELECTORS.join(','))
-              ? node
-              : node.querySelector?.(PAGE_AD_SELECTORS.join(','));
-            if (adInside) {
-              removeAndCollapse(adInside);
-              return;
-            }
+        // Anti-adblock popup — kill on sight (highest priority)
+        if (
+          node.matches?.(antiAdblockSelectorString) ||
+          node.querySelector?.(antiAdblockSelectorString)
+        ) {
+          killAntiAdblockPopup();
+          return;
+        }
+
+        // YouTube Premium / "Keep Ads" popup — same idea, by text content
+        if (node.tagName === 'YTD-POPUP-CONTAINER' || node.tagName === 'TP-YT-PAPER-DIALOG') {
+          // Defer one tick so text content is populated
+          setTimeout(killAntiAdblockPopup, 0);
+        }
+
+        if (settings.blockAds) {
+          const ad = node.matches?.(adSelectorString)
+            ? node
+            : node.querySelector?.(adSelectorString);
+          if (ad) {
+            removeWithWrapper(ad);
+            return;
           }
+        }
 
-          if (settings.removeUpsells) {
-            const upsellInside = node.matches?.(UPSELL_SELECTORS.join(','))
-              ? node
-              : node.querySelector?.(UPSELL_SELECTORS.join(','));
-            if (upsellInside) {
-              removeAndCollapse(upsellInside);
-            }
-          }
-        });
-      }
-    }
-
-    if (adClassChange) {
-      // Flip into / out of "ad active" mode immediately when YouTube toggles
-      // the .ad-showing class on the player. onAdStart() spins up a 50ms
-      // killer loop; onAdEnd() restores audio and clears the black overlay.
-      checkAdState();
+        if (settings.removeUpsells) {
+          const up = node.matches?.(upsellSelectorString)
+            ? node
+            : node.querySelector?.(upsellSelectorString);
+          if (up) removeWithWrapper(up);
+        }
+      });
     }
   });
 
-  // ─── INIT ─────────────────────────────────────────────────────────────────
+  // ────────────────────────────────────────────────────────────────────────
+  // INIT
+  // ────────────────────────────────────────────────────────────────────────
+
   function init() {
     observer.observe(document.documentElement, {
       childList: true,
@@ -444,21 +404,14 @@
       attributeFilter: ['class'],
     });
 
-    trackPauseIntent();
+    trackUserPauseIntent();
 
-    // Polling loop as belt-and-suspenders fallback for the ad lifecycle
-    // and DOM-level ad cleanup. The 50ms killAd loop is spun up separately
-    // by onAdStart() and only runs while an ad is actually playing.
-    setInterval(() => {
-      checkAdState();
-      removeVideoOverlays();
-      removePageAds();
-      removeUpsells();
-      keepPlaying();
-    }, 600);
+    // Main 100ms tick. Cheap because each helper bails fast when there's
+    // nothing to do.
+    setInterval(tick, 100);
 
-    removePageAds();
-    removeUpsells();
+    // First sweep immediately
+    tick();
   }
 
   if (document.readyState === 'loading') {

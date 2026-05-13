@@ -1,93 +1,44 @@
 // YT Unleashed — page-world patch (MAIN execution world, document_start)
 //
-// Intercepts /youtubei/v1/player responses and strips ad metadata so YouTube
-// never queues an ad stream. Real video loads immediately.
+// SINGLE PURPOSE: background play. Content scripts run in an isolated JS
+// world, so Object.defineProperty(document, 'hidden', …) from adblock.js
+// doesn't affect what YouTube's own code sees. This script runs in the
+// page's main world before any YouTube script, and overrides the Page
+// Visibility API so YouTube never thinks the tab is hidden.
 //
-// Critical implementation detail: when we rebuild the Response we MUST strip
-// content-encoding and content-length headers. The original response was
-// Brotli/gzip compressed; our new body is plain JSON. If we keep the
-// content-encoding header, YouTube tries to decompress plain text as Brotli,
-// fails, and stalls — which manifests as a multi-second loading delay.
+// We do NOT intercept fetch/XHR here. Previous versions did, and that
+// caused two problems: (a) Brotli content-encoding header mismatches that
+// stalled the player, and (b) anti-adblock detection that triggered the
+// "Ad blockers violate YouTube's Terms" popup.
 
-(function ytuPagePatch() {
+(function ytuPageWorldPatch() {
   'use strict';
-
   if (window.__ytuPagePatched) return;
   window.__ytuPagePatched = true;
 
-  function stripAds(obj) {
-    if (!obj || typeof obj !== 'object') return;
-    try {
-      delete obj.adPlacements;
-      delete obj.playerAds;
-      delete obj.adSlots;
-      delete obj.adBreakHeartbeatParams;
-      delete obj.adBreaks;
-      // Nested player response (next-endpoint wraps the player response)
-      if (obj.playerResponse) stripAds(obj.playerResponse);
-    } catch (_) {}
-  }
-
-  function isPlayerUrl(url) {
-    return typeof url === 'string' && url.indexOf('/youtubei/v1/player') !== -1;
-  }
-
-  const origFetch = window.fetch.bind(window);
-  window.fetch = function ytuFetch(input, init) {
-    const url =
-      typeof input === 'string' ? input : input && input.url ? input.url : '';
-    const promise = origFetch(input, init);
-
-    if (!isPlayerUrl(url)) return promise;
-
-    return promise
-      .then(function (response) {
-        if (!response || !response.ok) return response;
-        return response
-          .clone()
-          .text()
-          .then(function (text) {
-            try {
-              const data = JSON.parse(text);
-              stripAds(data);
-              // CRITICAL: drop content-encoding + content-length so the
-              // browser doesn't try to Brotli-decode our plain JSON body.
-              const headers = new Headers(response.headers);
-              headers.delete('content-encoding');
-              headers.delete('content-length');
-              return new Response(JSON.stringify(data), {
-                status: response.status,
-                statusText: response.statusText,
-                headers: headers,
-              });
-            } catch (_) {
-              return response;
-            }
-          })
-          .catch(function () {
-            return response;
-          });
-      })
-      .catch(function () {
-        return promise;
-      });
-  };
-
-  // Inline server-rendered player response (first page load).
-  // Stripping this prevents the very first video from getting an ad.
-  let _yipr;
   try {
-    Object.defineProperty(window, 'ytInitialPlayerResponse', {
+    Object.defineProperty(document, 'hidden', {
       configurable: true,
-      get: function () {
-        return _yipr;
-      },
-      set: function (v) {
-        try {
-          if (v) stripAds(v);
-        } catch (_) {}
-        _yipr = v;
-      },
+      get: () => false,
     });
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'visible',
+    });
+    Object.defineProperty(document, 'webkitHidden', {
+      configurable: true,
+      get: () => false,
+    });
+    Object.defineProperty(document, 'webkitVisibilityState', {
+      configurable: true,
+      get: () => 'visible',
+    });
+
+    // Drop any visibilitychange listener YouTube tries to register.
+    const _orig = EventTarget.prototype.addEventListener;
+    EventTarget.prototype.addEventListener = function (type, listener, opts) {
+      if (type === 'visibilitychange' || type === 'webkitvisibilitychange') return;
+      return _orig.call(this, type, listener, opts);
+    };
   } catch (_) {}
 })();

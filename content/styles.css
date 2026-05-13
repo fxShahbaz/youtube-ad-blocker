@@ -1,29 +1,42 @@
-/* YT Unleashed — CSS-level ad & upsell removal */
+/* YT Unleashed — GOD MODE CSS
+   Hides every ad surface YouTube currently ships. This is the first line
+   of defense; adblock.js is the second. CSS alone covers ~95% of cases. */
 
-/* Note: no DOM-level ad cloak. page-patch.js prevents ads from loading at
-   the network layer, so the player never even gets ad data. Any cloak CSS
-   actively hurts perceived speed because it hides YouTube's normal player
-   chrome during the brief moment a slipped-through ad fast-forwards. */
-
-/* ── Video player ad overlays ───────────────────────────────────────────── */
+/* ── In-player ad overlays ──────────────────────────────────────────────── */
 .ytp-ad-overlay-container,
 .ytp-ad-image-overlay,
 .ytp-ad-text-overlay,
-.ytp-ad-skip-button-container,
 .ytp-ad-action-interstitial,
 .ytp-ad-action-interstitial-background-color,
 .ytp-ad-feedback-dialog-container,
+.ytp-ad-info-dialog,
+.ytp-ad-preview-container,
 .ytp-ad-progress-list,
-.ytp-timed-metadata-overlay,
+.ytp-ad-simple-ad-badge,
+.ytp-ad-duration-remaining,
+.ytp-ad-message-container,
+.ytp-ad-overlay,
+.ytp-ad-player-overlay,
+.ytp-ad-player-overlay-instream-info,
+.ytp-ad-player-overlay-layout,
+.ytp-ad-player-overlay-skip-or-preview,
+.ytp-ad-button-icon,
+.ytp-flyout-cta,
 .ytp-ce-element,
 .ytp-suggested-action,
-.ytp-ad-player-overlay-instream-info {
+.ytp-timed-metadata-overlay,
+.ytp-ad-image-overlay-hover,
+.ytp-ad-overlay-link {
   display: none !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
 }
 
-/* ── Masthead & sidebar ads ─────────────────────────────────────────────── */
+/* Generic catch-all for any ytp-ad-* class (except the skip button which
+   our JS needs to find and click). */
+[class*="ytp-ad-"]:not([class*="skip-ad"]):not([class*="skip_ad"]) {
+  display: none !important;
+}
+
+/* ── Banner / feed / sidebar ads ────────────────────────────────────────── */
 #masthead-ad,
 #player-ads,
 ytd-ad-slot-renderer,
@@ -31,19 +44,43 @@ ytd-action-companion-ad-renderer,
 ytd-display-ad-renderer,
 ytd-banner-promo-renderer,
 ytd-promoted-sparkles-web-renderer,
+ytd-promoted-sparkles-text-search-renderer,
 ytd-promoted-video-renderer,
-ytd-video-masthead-ad-v3-renderer,
-ytd-companion-slot-renderer,
 ytd-in-feed-ad-layout-renderer,
 ytd-search-pyv-renderer,
-ytd-rich-item-renderer[is-ad],
+ytd-video-masthead-ad-v3-renderer,
+ytd-companion-slot-renderer,
+ytd-player-legacy-desktop-watch-ads-renderer,
+ytd-engagement-panel-section-list-renderer[panel-identifier*="ad"],
+ytd-engagement-panel-section-list-renderer[target-id*="ad"],
 ytd-merch-shelf-renderer,
-ytd-product-carousel-container-renderer {
+ytd-product-carousel-container-renderer,
+ytd-rich-item-renderer[is-ad],
+ytd-rich-shelf-renderer[is-ad],
+[data-is-ad="true"] {
   display: none !important;
-  visibility: hidden !important;
 }
 
-/* ── Premium upsells & popups ───────────────────────────────────────────── */
+/* ── Collapse grid-cell wrappers whose only child is an ad ───────────────
+   :has() makes the surrounding video grid auto-flow with no leftover gap. */
+ytd-rich-item-renderer:has(> ytd-ad-slot-renderer),
+ytd-rich-item-renderer:has(> ytd-display-ad-renderer),
+ytd-rich-item-renderer:has(> ytd-in-feed-ad-layout-renderer),
+ytd-rich-item-renderer:has(> ytd-promoted-video-renderer),
+ytd-rich-item-renderer:has(> ytd-promoted-sparkles-text-search-renderer),
+ytd-rich-item-renderer:empty,
+ytd-rich-section-renderer:has(ytd-statement-banner-renderer),
+ytd-rich-section-renderer:has(ytd-banner-promo-renderer),
+ytd-rich-section-renderer:has(ytd-mealbar-promo-renderer),
+ytd-rich-section-renderer:has(ytd-ad-slot-renderer),
+ytd-rich-section-renderer:has(ytd-display-ad-renderer),
+ytd-rich-section-renderer:has(ytd-promoted-sparkles-web-renderer),
+ytd-rich-section-renderer:empty,
+ytd-rich-grid-row:empty {
+  display: none !important;
+}
+
+/* ── YouTube Premium upsells ─────────────────────────────────────────────── */
 ytd-premium-yva-upsell-renderer,
 ytd-mealbar-promo-renderer,
 ytd-statement-banner-renderer,
@@ -51,57 +88,39 @@ ytd-statement-banner-renderer,
 .ytd-button-renderer[aria-label*="Premium"],
 tp-yt-paper-dialog[aria-label*="Premium"],
 tp-yt-paper-dialog[aria-label*="premium"],
-ytd-popup-container[dialog-id*="upsell"] {
+tp-yt-paper-toast.ytd-mealbar-promo-renderer,
+ytd-popup-container > tp-yt-paper-toast {
+  display: none !important;
+}
+
+/* ── ANTI-ADBLOCK ENFORCEMENT POPUP ─────────────────────────────────────────
+   This is YouTube's "Ad blockers violate our Terms of Service" modal.
+   When it appears, YouTube also dims the page with a backdrop and pauses
+   the video. We hide all three. adblock.js also resumes playback. */
+ytd-enforcement-message-view-model,
+tp-yt-paper-dialog[aria-labelledby*="enforcement"],
+tp-yt-iron-overlay-backdrop {
   display: none !important;
   visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
-/* ── Ad info badge ("Ad • X:XX") on video ──────────────────────────────── */
-.ytp-ad-simple-ad-badge,
-.ytp-ad-duration-remaining,
-.ytp-ad-preview-container,
-.ytp-ad-preview-text-container {
-  display: none !important;
-}
-
-/* ── Yellow ad progress bar ─────────────────────────────────────────────── */
-.ytp-play-progress[style*="background"] + .ytp-ad-progress,
-.ytp-ad-progress {
-  display: none !important;
-}
-
-/* ── Shopping / promo cards in sidebar ──────────────────────────────────── */
-ytd-rich-shelf-renderer[is-ad],
-ytd-shelf-renderer[is-ad],
-[data-is-ad="true"] {
-  display: none !important;
-}
-
-/* ── Collapse parent wrappers that held ads (no blank space left behind) ── */
-/* These :has() rules act as a pre-JS fallback. The real removal is done by
-   removeAndCollapse() in adblock.js, which actually deletes the wrapper from
-   the DOM so CSS Grid can auto-flow the neighboring video cards.
-   We use display:none (not height:0) so the grid layout reflows correctly. */
-ytd-rich-section-renderer:has(ytd-statement-banner-renderer),
-ytd-rich-section-renderer:has(ytd-banner-promo-renderer),
-ytd-rich-section-renderer:has(ytd-mealbar-promo-renderer),
-ytd-rich-section-renderer:has(ytd-ad-slot-renderer),
-ytd-rich-section-renderer:has(ytd-display-ad-renderer),
-ytd-rich-section-renderer:has(ytd-in-feed-ad-layout-renderer),
-ytd-rich-section-renderer:has(ytd-promoted-sparkles-web-renderer),
-ytd-rich-section-renderer:empty,
-
-ytd-rich-item-renderer:has(ytd-ad-slot-renderer),
-ytd-rich-item-renderer:has(ytd-display-ad-renderer),
-ytd-rich-item-renderer:has(ytd-in-feed-ad-layout-renderer),
-ytd-rich-item-renderer:has(ytd-promoted-video-renderer),
-ytd-rich-item-renderer:empty,
-
-ytd-rich-grid-row:empty,
-ytd-rich-grid-row:not(:has(ytd-rich-item-renderer)),
-
+/* ── Sidebar adslot containers on watch pages ────────────────────────────── */
+#secondary ytd-companion-slot-renderer,
+#secondary ytd-action-companion-ad-renderer,
+#secondary ytd-promoted-sparkles-text-search-renderer,
+#secondary ytd-display-ad-renderer,
+#secondary ytd-ad-slot-renderer,
+#secondary ytd-statement-banner-renderer,
 ytd-watch-next-secondary-results-renderer ytd-ad-slot-renderer,
 #related #player-ads,
 ytd-item-section-renderer:has(ytd-ad-slot-renderer) {
+  display: none !important;
+}
+
+/* ── Shopping shelf / promoted carousels ─────────────────────────────────── */
+ytd-rich-shelf-renderer[is-ad],
+ytd-shelf-renderer[is-ad] {
   display: none !important;
 }
