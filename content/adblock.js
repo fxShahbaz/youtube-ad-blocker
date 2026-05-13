@@ -48,6 +48,11 @@
   let _originalRate = 1;
   let _lastAdDuration = 0;
   let _userPaused = false;
+  // Tracks whether we've already issued the destructive skip (seek + 16x)
+  // for the current ad. Prevents the 50ms loop from re-applying these
+  // commands while YouTube is transitioning to the real video, which was
+  // causing long buffering/loading delays.
+  let _adKillFired = false;
 
   function getVideo() {
     return document.querySelector('video');
@@ -86,44 +91,53 @@
   // Called every 50ms while an ad is active.
   function killAd() {
     if (!settings.blockAds) return;
+    // Defensive: bail if the ad-showing class is gone. Without this guard the
+    // 50ms loop can fire one extra time *after* YouTube has started loading
+    // the real video, and re-applying currentTime=duration / playbackRate=16
+    // on the real video element causes the long buffering delay.
+    if (!isShowingAd()) return;
     const video = getVideo();
     if (!video) return;
 
-    // Keep audio silenced no matter how YouTube fights back
+    // Keep audio silenced (cheap to re-assert)
     if (!video.muted) video.muted = true;
-    if (video.volume !== 0) video.volume = 0;
 
-    // Skip button → instant exit
+    // Skip button → instant exit. Safe to call on every tick; clickSkipButton
+    // returns false when no button is present, so we fall through to the
+    // forced-end below for unskippable ads.
     if (clickSkipButton()) return;
 
-    // No skip available → jump to end. If seeking is blocked, the 16x
-    // playback rate makes it finish in ~0.3s anyway.
-    if (video.duration && !isNaN(video.duration) && video.duration > 0) {
+    // For the forced-end path, only act ONCE per ad. Re-asserting these
+    // values 20 times per second was confusing YouTube's state machine
+    // and dramatically extending the "Loading…" gap before the real video.
+    if (_adKillFired) return;
+
+    if (video.duration && !isNaN(video.duration) && video.duration > 1) {
       _lastAdDuration = video.duration;
       try {
-        if (video.currentTime < video.duration - 0.1) {
-          video.currentTime = video.duration;
-        }
+        video.currentTime = video.duration;
       } catch (_) {}
-      if (video.playbackRate !== 16) video.playbackRate = 16;
+      video.playbackRate = 16;
+      _adKillFired = true;
     }
   }
 
   function onAdStart() {
     if (_adActive) return;
     _adActive = true;
+    _adKillFired = false;
 
     const video = getVideo();
     if (video) {
-      _originalVolume = video.volume;
-      _originalMuted = video.muted;
-      _originalRate = video.playbackRate;
+      // Only capture the user's "true" volume/rate — if our previous run
+      // left them at 16x or muted, fall back to sensible defaults.
+      _originalVolume = video.volume > 0 ? video.volume : 1;
+      _originalMuted = video.muted && video.volume === 0 ? false : video.muted;
+      _originalRate = video.playbackRate === 16 ? 1 : video.playbackRate;
     }
 
-    // CSS attribute drives the "black box over player" overlay
     document.documentElement.setAttribute('data-ytu-ad', '1');
 
-    // Aggressive 50ms loop — clicks skip the instant it appears
     if (!_adKillerInterval) {
       _adKillerInterval = setInterval(killAd, 50);
     }
@@ -133,6 +147,13 @@
   function onAdEnd() {
     if (!_adActive) return;
     _adActive = false;
+    _adKillFired = false;
+
+    // Stop the killer loop FIRST so it can't fire again on the real video
+    if (_adKillerInterval) {
+      clearInterval(_adKillerInterval);
+      _adKillerInterval = null;
+    }
 
     document.documentElement.removeAttribute('data-ytu-ad');
 
@@ -140,12 +161,11 @@
     if (video) {
       video.muted = _originalMuted;
       video.volume = _originalVolume;
-      video.playbackRate = _originalRate === 16 ? 1 : _originalRate;
-    }
-
-    if (_adKillerInterval) {
-      clearInterval(_adKillerInterval);
-      _adKillerInterval = null;
+      video.playbackRate = _originalRate;
+      // Kick playback if the transition left the player paused/buffering
+      if (video.paused && !_userPaused) {
+        video.play().catch(() => {});
+      }
     }
 
     reportAdSkipped();
@@ -164,6 +184,21 @@
     _lastAdDuration = 0;
   }
 
+  // In a back-to-back ad sequence YouTube keeps `.ad-showing` set the whole
+  // time but reloads the <video> source for each ad — durationchange and
+  // loadstart fire on the boundary. Reset the kill flag so each new ad
+  // also gets the seek-to-end treatment.
+  function attachAdResetListeners() {
+    const video = getVideo();
+    if (!video || video._ytuAdResetBound) return;
+    video._ytuAdResetBound = true;
+    const reset = () => {
+      if (_adActive) _adKillFired = false;
+    };
+    video.addEventListener('durationchange', reset);
+    video.addEventListener('loadstart', reset);
+  }
+
   // ─── REMOVE DOM AD ELEMENTS ────────────────────────────────────────────────
   const PAGE_AD_SELECTORS = [
     '#masthead-ad',
@@ -173,11 +208,15 @@
     'ytd-display-ad-renderer',
     'ytd-banner-promo-renderer',
     'ytd-promoted-sparkles-web-renderer',
+    'ytd-promoted-sparkles-text-search-renderer',
     'ytd-promoted-video-renderer',
     'ytd-in-feed-ad-layout-renderer',
     'ytd-search-pyv-renderer',
     'ytd-video-masthead-ad-v3-renderer',
     'ytd-companion-slot-renderer',
+    'ytd-player-legacy-desktop-watch-ads-renderer',
+    'ytd-engagement-panel-section-list-renderer[panel-identifier*="ad"]',
+    'ytd-engagement-panel-section-list-renderer[target-id*="ad"]',
   ];
 
   const UPSELL_SELECTORS = [
@@ -224,13 +263,72 @@
   function removePageAds() {
     if (!settings.blockAds) return;
     PAGE_AD_SELECTORS.forEach((sel) => {
-      document.querySelectorAll(sel).forEach(removeAndCollapse);
+      try {
+        document.querySelectorAll(sel).forEach(removeAndCollapse);
+      } catch (_) {}
     });
     // Also catch empty grid cells left behind by aggressive YouTube placeholder logic
     document.querySelectorAll('ytd-rich-item-renderer').forEach((cell) => {
       if (cell.children.length === 0 || cell.textContent.trim() === '') {
         cell.remove();
       }
+    });
+    removeSponsoredCards();
+  }
+
+  // Heuristic sweep for sidebar / feed ad cards that don't match any of our
+  // known custom-element selectors. YouTube ships new ad surfaces regularly
+  // (e.g. the Google Ads "Performance Max" promo panel on watch pages) using
+  // generic tag names, so we look for the universal tell: a "Sponsored" or
+  // "ads.google.com" label inside the card.
+  function removeSponsoredCards() {
+    const roots = document.querySelectorAll(
+      '#secondary, #secondary-inner, #related, ytd-watch-next-secondary-results-renderer, ' +
+      '#contents.ytd-rich-grid-renderer, ytd-engagement-panel-section-list-renderer'
+    );
+    roots.forEach((root) => {
+      // Look at leaf-ish nodes — spans and small divs typically hold the label
+      root.querySelectorAll('span, div, yt-formatted-string').forEach((el) => {
+        if (el.children.length > 0) return; // not a leaf text node
+        const text = el.textContent.trim();
+        if (!text) return;
+        const lower = text.toLowerCase();
+        if (
+          lower === 'sponsored' ||
+          lower === 'ad' ||
+          lower.startsWith('sponsored ') ||
+          lower.includes('ads.google.com')
+        ) {
+          // Walk up to the nearest meaningful container and remove it
+          let container = el.closest(
+            'ytd-companion-slot-renderer, ytd-ad-slot-renderer, ' +
+            'ytd-display-ad-renderer, ytd-promoted-sparkles-web-renderer, ' +
+            'ytd-promoted-sparkles-text-search-renderer, ytd-statement-banner-renderer, ' +
+            'ytd-action-companion-ad-renderer, ytd-rich-section-renderer, ' +
+            'ytd-rich-item-renderer, ytd-engagement-panel-section-list-renderer, ' +
+            'ytd-player-legacy-desktop-watch-ads-renderer'
+          );
+          if (!container) {
+            // No known wrapper — walk up a few levels looking for any ytd-*
+            // custom element that isn't a top-level layout container.
+            let node = el.parentElement;
+            for (let i = 0; i < 8 && node; i++, node = node.parentElement) {
+              const tag = node.tagName?.toLowerCase() || '';
+              if (
+                tag.startsWith('ytd-') &&
+                !tag.includes('app') &&
+                !tag.includes('page-manager') &&
+                !tag.includes('two-column') &&
+                !tag.includes('watch-flexy')
+              ) {
+                container = node;
+                break;
+              }
+            }
+          }
+          if (container && container.isConnected) container.remove();
+        }
+      });
     });
   }
 

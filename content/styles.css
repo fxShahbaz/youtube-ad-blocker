@@ -1,25 +1,17 @@
 /* YT Unleashed — CSS-level ad & upsell removal */
 
-/* ── PREMIUM-FEEL AD CLOAK ───────────────────────────────────────────────
-   When adblock.js detects an ad, it sets <html data-ytu-ad="1">.
-   This rule paints the player completely black and hides every ad-related
-   surface (video pixels, chrome bars, gradients, "Ad" text, interstitials,
-   info badges, etc.) so the user sees a clean still frame for the fraction
-   of a second the killer loop needs to skip or fast-forward the ad.
-   The skip button is kept in the DOM (opacity: 0) so JS can still click it. */
+/* ── FALLBACK AD CLOAK ───────────────────────────────────────────────────
+   With page-patch.js intercepting the player API response, ads should never
+   actually start playing — so this CSS rarely activates. It only kicks in
+   if an ad slips past the network-level filter. We hide the video pixels
+   and every ad-related surface, but DO NOT paint the player solid black —
+   the natural player background already serves as a neutral frame, and a
+   forced black background makes any brief flash more jarring, not less. */
 html[data-ytu-ad] .html5-video-player .video-stream,
 html[data-ytu-ad] .html5-video-player video {
-  visibility: hidden !important;
+  opacity: 0 !important;
 }
 
-html[data-ytu-ad] .html5-video-player {
-  background: #000 !important;
-}
-
-html[data-ytu-ad] .ytp-chrome-top,
-html[data-ytu-ad] .ytp-chrome-bottom,
-html[data-ytu-ad] .ytp-gradient-top,
-html[data-ytu-ad] .ytp-gradient-bottom,
 html[data-ytu-ad] .ytp-ad-preview-container,
 html[data-ytu-ad] .ytp-ad-message-container,
 html[data-ytu-ad] .ytp-ad-overlay,
@@ -34,22 +26,18 @@ html[data-ytu-ad] .ytp-ad-player-overlay-instream-info,
 html[data-ytu-ad] .ytp-ad-player-overlay-layout,
 html[data-ytu-ad] .ytp-ad-button-icon,
 html[data-ytu-ad] .ytp-flyout-cta,
-html[data-ytu-ad] [class*="ytp-ad-"] {
+html[data-ytu-ad] [class*="ytp-ad-"]:not([class*="skip-ad"]) {
   display: none !important;
 }
 
-/* Keep skip button findable by JS (it queries by class), but invisible */
+/* Keep skip button findable by JS (queries by class) but invisible */
 html[data-ytu-ad] .ytp-skip-ad-button,
 html[data-ytu-ad] .ytp-ad-skip-button,
 html[data-ytu-ad] .ytp-ad-skip-button-modern,
 html[data-ytu-ad] .ytp-ad-skip-button-container,
 html[data-ytu-ad] [class*="skip-ad-button"] {
-  display: block !important;
   opacity: 0 !important;
   pointer-events: none !important;
-  position: absolute !important;
-  width: 1px !important;
-  height: 1px !important;
 }
 
 /* ── Video player ad overlays ───────────────────────────────────────────── */
