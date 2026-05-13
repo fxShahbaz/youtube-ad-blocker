@@ -1,44 +1,9 @@
 /* YT Unleashed — CSS-level ad & upsell removal */
 
-/* ── FALLBACK AD CLOAK ───────────────────────────────────────────────────
-   With page-patch.js intercepting the player API response, ads should never
-   actually start playing — so this CSS rarely activates. It only kicks in
-   if an ad slips past the network-level filter. We hide the video pixels
-   and every ad-related surface, but DO NOT paint the player solid black —
-   the natural player background already serves as a neutral frame, and a
-   forced black background makes any brief flash more jarring, not less. */
-html[data-ytu-ad] .html5-video-player .video-stream,
-html[data-ytu-ad] .html5-video-player video {
-  opacity: 0 !important;
-}
-
-html[data-ytu-ad] .ytp-ad-preview-container,
-html[data-ytu-ad] .ytp-ad-message-container,
-html[data-ytu-ad] .ytp-ad-overlay,
-html[data-ytu-ad] .ytp-ad-action-interstitial,
-html[data-ytu-ad] .ytp-ad-info-dialog,
-html[data-ytu-ad] .ytp-ad-image-overlay,
-html[data-ytu-ad] .ytp-ad-text-overlay,
-html[data-ytu-ad] .ytp-ad-simple-ad-badge,
-html[data-ytu-ad] .ytp-ad-duration-remaining,
-html[data-ytu-ad] .ytp-ad-player-overlay,
-html[data-ytu-ad] .ytp-ad-player-overlay-instream-info,
-html[data-ytu-ad] .ytp-ad-player-overlay-layout,
-html[data-ytu-ad] .ytp-ad-button-icon,
-html[data-ytu-ad] .ytp-flyout-cta,
-html[data-ytu-ad] [class*="ytp-ad-"]:not([class*="skip-ad"]) {
-  display: none !important;
-}
-
-/* Keep skip button findable by JS (queries by class) but invisible */
-html[data-ytu-ad] .ytp-skip-ad-button,
-html[data-ytu-ad] .ytp-ad-skip-button,
-html[data-ytu-ad] .ytp-ad-skip-button-modern,
-html[data-ytu-ad] .ytp-ad-skip-button-container,
-html[data-ytu-ad] [class*="skip-ad-button"] {
-  opacity: 0 !important;
-  pointer-events: none !important;
-}
+/* Note: no DOM-level ad cloak. page-patch.js prevents ads from loading at
+   the network layer, so the player never even gets ad data. Any cloak CSS
+   actively hurts perceived speed because it hides YouTube's normal player
+   chrome during the brief moment a slipped-through ad fast-forwards. */
 
 /* ── Video player ad overlays ───────────────────────────────────────────── */
 .ytp-ad-overlay-container,

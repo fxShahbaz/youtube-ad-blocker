@@ -129,17 +129,13 @@
 
     const video = getVideo();
     if (video) {
-      // Only capture the user's "true" volume/rate — if our previous run
-      // left them at 16x or muted, fall back to sensible defaults.
       _originalVolume = video.volume > 0 ? video.volume : 1;
       _originalMuted = video.muted && video.volume === 0 ? false : video.muted;
       _originalRate = video.playbackRate === 16 ? 1 : video.playbackRate;
     }
 
-    document.documentElement.setAttribute('data-ytu-ad', '1');
-
     if (!_adKillerInterval) {
-      _adKillerInterval = setInterval(killAd, 50);
+      _adKillerInterval = setInterval(killAd, 100);
     }
     killAd();
   }
@@ -149,20 +145,16 @@
     _adActive = false;
     _adKillFired = false;
 
-    // Stop the killer loop FIRST so it can't fire again on the real video
     if (_adKillerInterval) {
       clearInterval(_adKillerInterval);
       _adKillerInterval = null;
     }
-
-    document.documentElement.removeAttribute('data-ytu-ad');
 
     const video = getVideo();
     if (video) {
       video.muted = _originalMuted;
       video.volume = _originalVolume;
       video.playbackRate = _originalRate;
-      // Kick playback if the transition left the player paused/buffering
       if (video.paused && !_userPaused) {
         video.play().catch(() => {});
       }
