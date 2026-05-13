@@ -1,0 +1,73 @@
+/* YT Unleashed — CSS-level ad & upsell removal */
+
+/* ── Video player ad overlays ───────────────────────────────────────────── */
+.ytp-ad-overlay-container,
+.ytp-ad-image-overlay,
+.ytp-ad-text-overlay,
+.ytp-ad-skip-button-container,
+.ytp-ad-action-interstitial,
+.ytp-ad-action-interstitial-background-color,
+.ytp-ad-feedback-dialog-container,
+.ytp-ad-progress-list,
+.ytp-timed-metadata-overlay,
+.ytp-ce-element,
+.ytp-suggested-action,
+.ytp-ad-player-overlay-instream-info {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+/* ── Masthead & sidebar ads ─────────────────────────────────────────────── */
+#masthead-ad,
+#player-ads,
+ytd-ad-slot-renderer,
+ytd-action-companion-ad-renderer,
+ytd-display-ad-renderer,
+ytd-banner-promo-renderer,
+ytd-promoted-sparkles-web-renderer,
+ytd-promoted-video-renderer,
+ytd-video-masthead-ad-v3-renderer,
+ytd-companion-slot-renderer,
+ytd-in-feed-ad-layout-renderer,
+ytd-search-pyv-renderer,
+ytd-rich-item-renderer[is-ad],
+ytd-merch-shelf-renderer,
+ytd-product-carousel-container-renderer {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* ── Premium upsells & popups ───────────────────────────────────────────── */
+ytd-premium-yva-upsell-renderer,
+ytd-mealbar-promo-renderer,
+ytd-statement-banner-renderer,
+.ytd-upsell-dialog-renderer,
+.ytd-button-renderer[aria-label*="Premium"],
+tp-yt-paper-dialog[aria-label*="Premium"],
+tp-yt-paper-dialog[aria-label*="premium"],
+ytd-popup-container[dialog-id*="upsell"] {
+  display: none !important;
+  visibility: hidden !important;
+}
+
+/* ── Ad info badge ("Ad • X:XX") on video ──────────────────────────────── */
+.ytp-ad-simple-ad-badge,
+.ytp-ad-duration-remaining,
+.ytp-ad-preview-container,
+.ytp-ad-preview-text-container {
+  display: none !important;
+}
+
+/* ── Yellow ad progress bar ─────────────────────────────────────────────── */
+.ytp-play-progress[style*="background"] + .ytp-ad-progress,
+.ytp-ad-progress {
+  display: none !important;
+}
+
+/* ── Shopping / promo cards in sidebar ──────────────────────────────────── */
+ytd-rich-shelf-renderer[is-ad],
+ytd-shelf-renderer[is-ad],
+[data-is-ad="true"] {
+  display: none !important;
+}

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>YT Unleashed</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="container">
+
+    <!-- Header -->
+    <div class="header">
+      <div class="logo">
+        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+          <circle cx="14" cy="14" r="14" fill="#FF0000"/>
+          <polygon points="11,9 11,19 21,14" fill="white"/>
+        </svg>
+      </div>
+      <div class="title-group">
+        <span class="title">YT Unleashed</span>
+        <span class="badge">PREMIUM</span>
+      </div>
+    </div>
+
+    <!-- Status pill -->
+    <div class="status-pill" id="status-pill">
+      <span class="status-dot" id="status-dot"></span>
+      <span class="status-text" id="status-text">Protection Active</span>
+    </div>
+
+    <!-- Stats row -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-value" id="ads-blocked">0</div>
+        <div class="stat-label">Ads Blocked</div>
+      </div>
+      <div class="divider"></div>
+      <div class="stat-card">
+        <div class="stat-value" id="time-saved">0s</div>
+        <div class="stat-label">Time Saved</div>
+      </div>
+    </div>
+
+    <!-- Feature toggles -->
+    <div class="features">
+      <div class="feature-row">
+        <div class="feature-left">
+          <span class="feature-icon">🚫</span>
+          <div class="feature-info">
+            <div class="feature-name">Block All Ads</div>
+            <div class="feature-desc">Video, banner & overlay ads</div>
+          </div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-ads" />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="feature-row">
+        <div class="feature-left">
+          <span class="feature-icon">🎵</span>
+          <div class="feature-info">
+            <div class="feature-name">Background Play</div>
+            <div class="feature-desc">Keep audio when tab is hidden</div>
+          </div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-bg" />
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="feature-row">
+        <div class="feature-left">
+          <span class="feature-icon">⭐</span>
+          <div class="feature-info">
+            <div class="feature-name">Remove Upsells</div>
+            <div class="feature-desc">No more "Try Premium" popups</div>
+          </div>
+        </div>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-upsell" />
+          <span class="slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="footer">YT Unleashed v1.0</div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
